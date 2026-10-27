@@ -1,0 +1,21 @@
+[project]
+name = "etchr"
+version = "0.1.0"
+description = "A hand-labeled benchmark for whether LLM memory writes are supported by the conversation."
+readme = "README.md"
+authors = [
+    { name = "priteesshhh", email = "WritetoPriteesh@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic==2.*",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest==8.*",
+]
