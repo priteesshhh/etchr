@@ -19,3 +19,6 @@ build-backend = "uv_build"
 dev = [
     "pytest==8.*",
 ]
+
+[project.scripts]
+etchr = "etchr.cli:main"
