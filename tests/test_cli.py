@@ -27,18 +27,30 @@ def scripted(answers):
 def test_label_saves_each_answer(tmp_path):
     path = tmp_path / "cases.jsonl"
     write_cases(path)
-    n = label(path, ask=scripted(["c", "t1", "clear negation", "u", "", ""]), out=lambda _: None)
+    # case 1: contradicted, proven by line 1; case 2: never said
+    n = label(path, ask=scripted(["2", "1", "3"]), out=lambda _: None)
     assert n == 2
     first, second = load_cases(path)
     assert first.label is Label.CONTRADICTED and first.evidence_turn_ids == ["t1"]
-    assert first.notes == "clear negation"
     assert second.label is Label.UNSUPPORTED and second.evidence_turn_ids == []
+
+
+def test_single_turn_needs_no_line_number(tmp_path):
+    path = tmp_path / "cases.jsonl"
+    path.write_text(json.dumps({
+        "id": "negation-001", "failure_type": "negation",
+        "conversation": [{"turn_id": "t1", "speaker": "user", "text": "I don't eat meat."}],
+        "candidate_memory": "User eats meat.",
+    }) + "\n", encoding="utf-8")
+    label(path, ask=scripted(["2"]), out=lambda _: None)
+    (case,) = load_cases(path)
+    assert case.label is Label.CONTRADICTED and case.evidence_turn_ids == ["t1"]
 
 
 def test_quit_keeps_earlier_labels(tmp_path):
     path = tmp_path / "cases.jsonl"
     write_cases(path)
-    label(path, ask=scripted(["c", "t1", "", "q"]), out=lambda _: None)
+    label(path, ask=scripted(["2", "1", "q"]), out=lambda _: None)
     first, second = load_cases(path)
     assert first.is_labeled and not second.is_labeled
 
@@ -46,24 +58,24 @@ def test_quit_keeps_earlier_labels(tmp_path):
 def test_bad_input_reprompts(tmp_path):
     path = tmp_path / "cases.jsonl"
     write_cases(path, n=1)
-    # unknown key, unknown turn id, supported with no evidence, then a valid answer
-    answers = ["x", "s", "t9", "s", "", "s", "t1", ""]
+    # junk answer, then yes; junk line, out-of-range line, go back; then yes with line 2
+    answers = ["nothing is related", "1", "u", "9", "b", "1", "2"]
     label(path, ask=scripted(answers), out=lambda _: None)
     (case,) = load_cases(path)
-    assert case.label is Label.SUPPORTED and case.evidence_turn_ids == ["t1"]
+    assert case.label is Label.SUPPORTED and case.evidence_turn_ids == ["t2"]
 
 
 def test_skip_leaves_case_unlabeled(tmp_path):
     path = tmp_path / "cases.jsonl"
     write_cases(path, n=1)
-    assert label(path, ask=scripted(["k"]), out=lambda _: None) == 0
+    assert label(path, ask=scripted(["s"]), out=lambda _: None) == 0
     assert not load_cases(path)[0].is_labeled
 
 
 def test_relabel_run_skips_labeled(tmp_path):
     path = tmp_path / "cases.jsonl"
     write_cases(path, n=1)
-    label(path, ask=scripted(["u", "", ""]), out=lambda _: None)
+    label(path, ask=scripted(["3"]), out=lambda _: None)
     # Nothing left to ask; any prompt would raise StopIteration.
     assert label(path, ask=scripted([]), out=lambda _: None) == 0
 
@@ -89,7 +101,7 @@ def test_save_is_atomic_on_failure(tmp_path, monkeypatch):
 def test_status_counts(tmp_path):
     path = tmp_path / "cases.jsonl"
     write_cases(path)
-    label(path, ask=scripted(["u", "", "", "q"]), out=lambda _: None)
+    label(path, ask=scripted(["3", "q"]), out=lambda _: None)
     lines = []
     status(path, out=lines.append)
     assert lines == ["1/2 labeled", "  unsupported: 1"]

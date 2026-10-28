@@ -17,7 +17,6 @@ from etchr.schema import Case, Label, load_cases
 
 DEFAULT_CASES = Path("data/cases.jsonl")
 
-_LABEL_KEYS = {"s": Label.SUPPORTED, "u": Label.UNSUPPORTED, "c": Label.CONTRADICTED}
 
 
 def save_cases(path: Path, cases: list[Case]) -> None:
@@ -41,47 +40,74 @@ def status(path: Path, out: Callable[[str], None] = print) -> None:
         out(f"  {label}: {n}")
 
 
-def _render(case: Case, out: Callable[[str], None]) -> None:
+_ANSWERS = {"1": Label.SUPPORTED, "2": Label.CONTRADICTED, "3": Label.UNSUPPORTED}
+
+_QUESTION = (
+    "Is the memory true, based ONLY on what the user said?\n"
+    "  1 = yes, the user said it\n"
+    "  2 = no, the user said the opposite\n"
+    "  3 = the user never said it\n"
+    "  s = not sure, skip    q = save and quit\n"
+    "> "
+)
+
+
+def _render(case: Case, n: int, total: int, out: Callable[[str], None]) -> None:
     out("")
-    out(f"== {case.id} ({case.failure_type.value}) ==")
-    for turn in case.conversation:
-        out(f"  [{turn.turn_id}] {turn.speaker}: {turn.text}")
-    out(f"  CANDIDATE MEMORY: {case.candidate_memory}")
+    out(f"--- case {n} of {total} ({case.id}) ---")
+    out("Conversation:")
+    for line_no, turn in enumerate(case.conversation, start=1):
+        out(f"  line {line_no}  {turn.speaker.upper()}: {turn.text}")
+    out("")
+    out(f"Memory the app wants to save:  \"{case.candidate_memory}\"")
+    out("")
+
+
+def _pick_evidence(case: Case, ask: Callable[[str], str], out: Callable[[str], None]) -> list[str] | None:
+    """Return the turn ids that prove the answer. None means the user cancelled."""
+    turns = case.conversation
+    if len(turns) == 1:
+        return [turns[0].turn_id]
+    while True:
+        raw = ask(f"Which line shows it? (1-{len(turns)}, or b to go back): ").strip().lower()
+        if raw == "b":
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= len(turns):
+            return [turns[int(raw) - 1].turn_id]
+        out(f"  Type a line number from 1 to {len(turns)}.")
 
 
 def label(path: Path, ask: Callable[[str], str] = input, out: Callable[[str], None] = print) -> int:
     """Interactively label unlabeled cases. Returns how many were labeled."""
     cases = load_cases(path)
+    todo = [i for i, c in enumerate(cases) if not c.is_labeled]
     done = 0
-    for i, case in enumerate(cases):
-        if case.is_labeled:
-            continue
-        _render(case, out)
+    for n, i in enumerate(todo, start=1):
+        case = cases[i]
+        _render(case, n, len(todo), out)
         while True:
-            key = ask("label [s]upported [u]nsupported [c]ontradicted, [k] skip, [q] quit: ").strip().lower()
+            key = ask(_QUESTION).strip().lower()
             if key == "q":
                 out(f"Saved. Labeled {done} this session.")
                 return done
-            if key == "k":
+            if key == "s":
                 break
-            if key not in _LABEL_KEYS:
-                out("  Type s, u, c, k or q.")
+            if key not in _ANSWERS:
+                out("  Type 1, 2, 3, s or q.")
                 continue
-            chosen = _LABEL_KEYS[key]
-            valid_ids = {t.turn_id for t in case.conversation}
-            evidence = [e for e in ask("evidence turn ids, space-separated (blank for none): ").split() if e]
-            bad = [e for e in evidence if e not in valid_ids]
-            if bad:
-                out(f"  Unknown turn ids {bad}. Try again.")
-                continue
-            if chosen is not Label.UNSUPPORTED and not evidence:
-                out(f"  '{chosen.value}' needs at least one evidence turn. Try again.")
-                continue
-            note = ask("note (optional): ").strip()
-            cases[i] = case.model_copy(update={"label": chosen, "evidence_turn_ids": evidence, "notes": note})
-            Case.model_validate(cases[i].model_dump())  # model_copy skips validation
+            chosen = _ANSWERS[key]
+            evidence: list[str] = []
+            if chosen is not Label.UNSUPPORTED:
+                picked = _pick_evidence(case, ask, out)
+                if picked is None:
+                    continue
+                evidence = picked
+            cases[i] = Case.model_validate(
+                case.model_dump() | {"label": chosen.value, "evidence_turn_ids": evidence}
+            )
             save_cases(path, cases)
             done += 1
+            out(f"  Saved: {chosen.value}")
             break
     out(f"Done. Labeled {done} this session.")
     return done
